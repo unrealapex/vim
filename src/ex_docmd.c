@@ -287,6 +287,7 @@ static void	ex_tag_cmd(exarg_T *eap, char_u *name);
 # define ex_endwhile		ex_ni
 # define ex_eval		ex_ni
 # define ex_execute		ex_ni
+# define ex_incdec		ex_ni
 # define ex_finally		ex_ni
 # define ex_finish		ex_ni
 # define ex_function		ex_ni
@@ -2925,6 +2926,17 @@ parse_command_modifiers(
 			    cmod->cmod_flags |= CMOD_LOCKMARKS;
 			    continue;
 			}
+			if (checkforcmd_noparen(&eap->cmd, "legacy", 3))
+			{
+			    if (ends_excmd2(p, eap->cmd))
+			    {
+				*errormsg =
+				      _(e_vim9cmd_must_be_followed_by_command);
+				return FAIL;
+			    }
+			    cmod->cmod_flags |= CMOD_LEGACY;
+			    continue;
+			}
 
 			if (!checkforcmd_noparen(&eap->cmd, "leftabove", 5))
 			    break;
@@ -3519,6 +3531,13 @@ find_ex_command(
 	{
 	    eap->cmdidx = CMD_eval;
 	    return eap->cmd;
+	}
+
+	// Check for "++nr" and "--nr".
+	if (p == eap->cmd && p[0] == p[1] && (*p == '+' || *p == '-'))
+	{
+	    eap->cmdidx = *p == '+' ? CMD_increment : CMD_decrement;
+	    return eap->cmd + 2;
 	}
     }
 #endif

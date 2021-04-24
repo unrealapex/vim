@@ -51,6 +51,7 @@ static int eval3(char_u **arg, typval_T *rettv, evalarg_T *evalarg);
 static int eval4(char_u **arg, typval_T *rettv, evalarg_T *evalarg);
 static int eval5(char_u **arg, typval_T *rettv, evalarg_T *evalarg);
 static int eval6(char_u **arg, typval_T *rettv, evalarg_T *evalarg, int want_string);
+static int eval7t(char_u **arg, typval_T *rettv, evalarg_T *evalarg, int want_string);
 static int eval7(char_u **arg, typval_T *rettv, evalarg_T *evalarg, int want_string);
 static int eval7_leader(typval_T *rettv, int numeric_only, char_u *start_leader, char_u **end_leaderp);
 
@@ -2082,7 +2083,8 @@ getline_peek_skip_comments(evalarg_T *evalarg)
  * If inside Vim9 script, "arg" points to the end of a line (ignoring a #
  * comment) and there is a next line, return the next line (skipping blanks)
  * and set "getnext".
- * Otherwise just return "arg" unmodified and set "getnext" to FALSE.
+ * Otherwise return the next non-white at or after "arg" and set "getnext" to
+ * FALSE.
  * "arg" must point somewhere inside a line, not at the start.
  */
     char_u *
@@ -2094,7 +2096,7 @@ eval_next_non_blank(char_u *arg, evalarg_T *evalarg, int *getnext)
     if (in_vim9script()
 	    && evalarg != NULL
 	    && (evalarg->eval_cookie != NULL || evalarg->eval_cctx != NULL)
-	    && (*p == NUL || (VIM_ISWHITE(p[-1]) && vim9_comment_start(p))))
+	    && (*p == NUL || (vim9_comment_start(p) && VIM_ISWHITE(p[-1]))))
     {
 	char_u *next;
 
@@ -2854,11 +2856,14 @@ eval5(char_u **arg, typval_T *rettv, evalarg_T *evalarg)
 
 	// "." is only string concatenation when scriptversion is 1
 	// "+=", "-=" and "..=" are assignments
+	// "++" and "--" on the next line are a separate command.
 	p = eval_next_non_blank(*arg, evalarg, &getnext);
 	op = *p;
 	concat = op == '.' && (*(p + 1) == '.' || current_sctx.sc_version < 2);
 	if ((op != '+' && op != '-' && !concat) || p[1] == '='
 					       || (p[1] == '.' && p[2] == '='))
+	    break;
+	if (getnext && (op == '+' || op == '-') && p[0] == p[1])
 	    break;
 
 	evaluate = evalarg == NULL ? 0 : (evalarg->eval_flags & EVAL_EVALUATE);
@@ -3068,7 +3073,7 @@ eval6(
     /*
      * Get the first variable.
      */
-    if (eval7(arg, rettv, evalarg, want_string) == FAIL)
+    if (eval7t(arg, rettv, evalarg, want_string) == FAIL)
 	return FAIL;
 
     /*
@@ -3141,7 +3146,7 @@ eval6(
 	    return FAIL;
 	}
 	*arg = skipwhite_and_linebreak(*arg + 1, evalarg);
-	if (eval7(arg, &var2, evalarg, FALSE) == FAIL)
+	if (eval7t(arg, &var2, evalarg, FALSE) == FAIL)
 	    return FAIL;
 
 	if (evaluate)
@@ -3229,6 +3234,86 @@ eval6(
     }
 
     return OK;
+}
+
+/*
+ * Handle a type cast before a base level expression.
+ * "arg" must point to the first non-white of the expression.
+ * "arg" is advanced to just after the recognized expression.
+ * Return OK or FAIL.
+ */
+    static int
+eval7t(
+    char_u	**arg,
+    typval_T	*rettv,
+    evalarg_T	*evalarg,
+    int		want_string)	// after "." operator
+{
+    type_T	*want_type = NULL;
+    garray_T	type_list;	    // list of pointers to allocated types
+    int		res;
+    int		evaluate = evalarg == NULL ? 0
+				       : (evalarg->eval_flags & EVAL_EVALUATE);
+
+    // Recognize <type> in Vim9 script only.
+    if (in_vim9script() && **arg == '<' && eval_isnamec1((*arg)[1]))
+    {
+	++*arg;
+	ga_init2(&type_list, sizeof(type_T *), 10);
+	want_type = parse_type(arg, &type_list, TRUE);
+	if (want_type == NULL && (evaluate || **arg != '>'))
+	{
+	    clear_type_list(&type_list);
+	    return FAIL;
+	}
+
+	if (**arg != '>')
+	{
+	    if (*skipwhite(*arg) == '>')
+		semsg(_(e_no_white_space_allowed_before_str_str), ">", *arg);
+	    else
+		emsg(_(e_missing_gt));
+	    clear_type_list(&type_list);
+	    return FAIL;
+	}
+	++*arg;
+	*arg = skipwhite_and_linebreak(*arg, evalarg);
+    }
+
+    res = eval7(arg, rettv, evalarg, want_string);
+
+    if (want_type != NULL && evaluate)
+    {
+	if (res == OK)
+	{
+	    type_T *actual = typval2type(rettv, get_copyID(), &type_list, TRUE);
+
+	    if (!equal_type(want_type, actual))
+	    {
+		if (want_type == &t_bool && actual != &t_bool
+					&& (actual->tt_flags & TTFLAG_BOOL_OK))
+		{
+		    int n = tv2bool(rettv);
+
+		    // can use "0" and "1" for boolean in some places
+		    clear_tv(rettv);
+		    rettv->v_type = VAR_BOOL;
+		    rettv->vval.v_number = n ? VVAL_TRUE : VVAL_FALSE;
+		}
+		else
+		{
+		    where_T where;
+
+		    where.wt_index = 0;
+		    where.wt_variable = TRUE;
+		    res = check_type(want_type, actual, TRUE, where);
+		}
+	    }
+	}
+	clear_type_list(&type_list);
+    }
+
+    return res;
 }
 
     int
