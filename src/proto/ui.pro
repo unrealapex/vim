@@ -19,7 +19,7 @@ int vim_is_input_buf_empty(void);
 int vim_free_in_input_buf(void);
 int vim_used_in_input_buf(void);
 char_u *get_input_buf(void);
-void set_input_buf(char_u *p);
+void set_input_buf(char_u *p, int overwrite);
 void add_to_input_buf(char_u *s, int len);
 void add_to_input_buf_csi(char_u *str, int len);
 void trash_input_buf(void);
@@ -30,6 +30,8 @@ void ui_cursor_shape_forced(int forced);
 void ui_cursor_shape(void);
 int check_col(int col);
 int check_row(int row);
+long scroll_line_len(linenr_T lnum);
+linenr_T ui_find_longest_lnum(void);
 void ui_focus_change(int in_focus);
 void im_save_status(long *psave);
 /* vim: set ft=c : */

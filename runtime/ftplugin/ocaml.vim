@@ -5,12 +5,14 @@
 "              Pierre Vittet       <pierre-vittet@pvittet.com>
 "              Stefano Zacchiroli  <zack@bononia.it>
 "              Vincent Aravantinos <firstname.name@imag.fr>
+"              Riley Bruins <ribru17@gmail.com> ('commentstring')
 " URL:         https://github.com/ocaml/vim-ocaml
 " Last Change:
 "              2013 Oct 27 - Added commentstring (MM)
 "              2013 Jul 26 - load default compiler settings (MM)
 "              2013 Jul 24 - removed superfluous efm-setting (MM)
 "              2013 Jul 22 - applied fixes supplied by Hirotaka Hamada (MM)
+"              2024 May 23 - added space in commentstring (RB)
 
 if exists("b:did_ftplugin")
   finish
@@ -40,7 +42,7 @@ set cpo&vim
 " Comment string
 setlocal comments=sr:(*\ ,mb:\ ,ex:*)
 setlocal comments^=sr:(**,mb:\ \ ,ex:*)
-setlocal commentstring=(*%s*)
+setlocal commentstring=(*\ %s\ *)
 
 " Add mappings, unless the user didn't want this.
 if !exists("no_plugin_maps") && !exists("no_ocaml_maps")
@@ -371,7 +373,7 @@ endfunction
               endif
             else
               let annot_file_name = ''
-              "(Pierre Vittet: I have commented 4b because this was chrashing
+              "(Pierre Vittet: I have commented 4b because this was crashing
               "my vim (it produced infinite loop))
               "
               " 4b. anarchy : the renamed _build directory may be higher in the hierarchy
@@ -462,8 +464,8 @@ endfunction
 
   "b. 'search' and 'match' work to find the type information
 
-      "In:  - lin1,col1: postion of expression first char
-      "     - lin2,col2: postion of expression last char
+      "In:  - lin1,col1: position of expression first char
+      "     - lin2,col2: position of expression last char
       "Out: - the pattern to be looked for to find the block
       " Must be called in the source buffer (use of line2byte)
     function! s:Block_pattern(lin1,lin2,col1,col2)
@@ -581,7 +583,7 @@ endfunction
       let res = substitute (a:res, "\n", "", "g" )
       "remove double space
       let res =substitute(res , "  ", " ", "g")
-      "remove space at begining of string.
+      "remove space at beginning of string.
       let res = substitute(res, "^ *", "", "g")
       return res
     endfunction

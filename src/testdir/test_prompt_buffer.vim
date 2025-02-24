@@ -39,6 +39,10 @@ func WriteScript(name)
 	\ '  set nomodified',
 	\ 'endfunc',
 	\ '',
+	\ 'func SwitchWindows()',
+	\ '  call timer_start(0, {-> execute("wincmd p|wincmd p", "")})',
+	\ 'endfunc',
+	\ '',
 	\ 'call setline(1, "other buffer")',
 	\ 'set nomodified',
 	\ 'new',
@@ -99,6 +103,27 @@ func Test_prompt_editing()
   call delete(scriptName)
 endfunc
 
+func Test_prompt_switch_windows()
+  call CanTestPromptBuffer()
+  let scriptName = 'XpromptSwitchWindows'
+  call WriteScript(scriptName)
+
+  let buf = RunVimInTerminal('-S ' . scriptName, {'rows': 12})
+  call WaitForAssert({-> assert_equal('cmd:', term_getline(buf, 1))})
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 12))})
+
+  call term_sendkeys(buf, "\<C-O>:call SwitchWindows()\<CR>")
+  call term_wait(buf, 50)
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 12))})
+
+  call term_sendkeys(buf, "\<Esc>")
+  call term_wait(buf, 50)
+  call WaitForAssert({-> assert_match('^ *$', term_getline(buf, 12))})
+
+  call StopVimInTerminal(buf)
+  call delete(scriptName)
+endfunc
+
 func Test_prompt_garbage_collect()
   func MyPromptCallback(x, text)
     " NOP
@@ -150,6 +175,8 @@ func Test_prompt_buffer_edit()
   call assert_beeps('normal! S')
   call assert_beeps("normal! \<C-A>")
   call assert_beeps("normal! \<C-X>")
+  call assert_beeps("normal! dp")
+  call assert_beeps("normal! do")
   " pressing CTRL-W in the prompt buffer should trigger the window commands
   call assert_equal(1, winnr())
   exe "normal A\<C-W>\<C-W>"
@@ -193,7 +220,7 @@ func Test_prompt_buffer_getbufinfo()
   %bwipe!
 endfunc
 
-function! Test_prompt_while_writing_to_hidden_buffer()
+func Test_prompt_while_writing_to_hidden_buffer()
   call CanTestPromptBuffer()
   CheckUnix
 
@@ -210,7 +237,7 @@ function! Test_prompt_while_writing_to_hidden_buffer()
         \ done'], #{out_io: 'buffer', out_name: ''})
     startinsert
   END
-  eval script->writefile(scriptName)
+  eval script->writefile(scriptName, 'D')
 
   let buf = RunVimInTerminal('-S ' .. scriptName, {})
   call WaitForAssert({-> assert_equal('cmd:', term_getline(buf, 1))})
@@ -223,7 +250,96 @@ function! Test_prompt_while_writing_to_hidden_buffer()
   call WaitForAssert({-> assert_equal('cmd:testtesttest', term_getline(buf, 1))})
 
   call StopVimInTerminal(buf)
-  call delete(scriptName)
+endfunc
+
+func Test_prompt_appending_while_hidden()
+  call CanTestPromptBuffer()
+
+  let script =<< trim END
+      new prompt
+      set buftype=prompt
+      set bufhidden=hide
+
+      func s:TextEntered(text)
+          if a:text == 'exit'
+              close
+          endif
+          echowin 'Entered:' a:text
+      endfunc
+      call prompt_setcallback(bufnr(), function('s:TextEntered'))
+
+      func DoAppend()
+        call appendbufline('prompt', '$', 'Test')
+        return ''
+      endfunc
+  END
+  call writefile(script, 'XpromptBuffer', 'D')
+
+  let buf = RunVimInTerminal('-S XpromptBuffer', {'rows': 10})
+  call TermWait(buf)
+
+  call term_sendkeys(buf, "asomething\<CR>")
+  call TermWait(buf)
+
+  call term_sendkeys(buf, "exit\<CR>")
+  call WaitForAssert({-> assert_notmatch('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, ":call DoAppend()\<CR>")
+  call WaitForAssert({-> assert_notmatch('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "i")
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "\<C-R>=DoAppend()\<CR>")
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "\<Esc>")
+  call StopVimInTerminal(buf)
+endfunc
+
+" Modifying a hidden buffer while leaving a prompt buffer should not prevent
+" stopping of Insert mode, and returning to the prompt buffer later should
+" restore Insert mode.
+func Test_prompt_leave_modify_hidden()
+  call CanTestPromptBuffer()
+
+  let script =<< trim END
+      file hidden
+      set bufhidden=hide
+      enew
+      new prompt
+      set buftype=prompt
+
+      inoremap <buffer> w <Cmd>wincmd w<CR>
+      inoremap <buffer> q <Cmd>bwipe!<CR>
+      autocmd BufLeave prompt call appendbufline('hidden', '$', 'Leave')
+      autocmd BufEnter prompt call appendbufline('hidden', '$', 'Enter')
+      autocmd BufWinLeave prompt call appendbufline('hidden', '$', 'Close')
+  END
+  call writefile(script, 'XpromptLeaveModifyHidden', 'D')
+
+  let buf = RunVimInTerminal('-S XpromptLeaveModifyHidden', {'rows': 10})
+  call TermWait(buf)
+
+  call term_sendkeys(buf, "a")
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "w")
+  call WaitForAssert({-> assert_notmatch('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "\<C-W>w")
+  call WaitForAssert({-> assert_match('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, "q")
+  call WaitForAssert({-> assert_notmatch('-- INSERT --', term_getline(buf, 10))})
+
+  call term_sendkeys(buf, ":bwipe!\<CR>")
+  call WaitForAssert({-> assert_equal('Leave', term_getline(buf, 2))})
+  call WaitForAssert({-> assert_equal('Enter', term_getline(buf, 3))})
+  call WaitForAssert({-> assert_equal('Leave', term_getline(buf, 4))})
+  call WaitForAssert({-> assert_equal('Close', term_getline(buf, 5))})
+
+  call StopVimInTerminal(buf)
 endfunc
 
 " vim: shiftwidth=2 sts=2 expandtab
